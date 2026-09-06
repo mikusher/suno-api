@@ -116,6 +116,8 @@ BROWSER_LOCALE=en
 BROWSER_HEADLESS=true
 ```
 
+Keep `SUNO_COOKIE` only in the runtime `.env` file. If the cookie contains `$`, wrap the full value in single quotes so Docker Compose does not interpolate it.
+
 ### 5. Run suno-api
 
 - If you’ve deployed to Vercel:
@@ -159,7 +161,14 @@ Suno API currently mainly implements the following APIs:
 - `/api/get_aligned_lyrics`: Get list of timestamps for each word in the lyrics
 - `/api/clip`: Get clip information based on ID passed as query parameter `id`
 - `/api/concat`: Generate the whole song from extensions
+- `/api/health`: Lightweight unauthenticated health check
+- `/api/v55/generate`: Generate custom v5.5 music using `chirp-fenix` by default
+- `/api/v55/clip`: Get current clip status and metadata by `id`
+- `/api/v55/download?id=<clip_id>&format=wav|mp3|m4a|mp4`: Authorize and proxy the final download
+- `/api/v55/download/authorize`: Explicit download authorization for debugging only
 ```
+
+The v5.5 download endpoint is atomic: call `/api/v55/download` directly after the clip is complete. Do not call `/api/v55/download/authorize` first, because the download endpoint performs authorization internally.
 
 You can also specify the cookies in the `Cookie` header of your request, overriding the default cookies in the `SUNO_COOKIE` environment variable. This comes in handy when, for example, you want to use multiple free accounts at the same time.
 

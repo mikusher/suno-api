@@ -9,6 +9,14 @@ function normalizeDownloadFormat(format) {
   return SUPPORTED_DOWNLOAD_FORMATS.has(normalized) ? normalized : null;
 }
 
+function assertSecureDownloadUrl(value, baseUrl) {
+  const url = new URL(value, baseUrl);
+  if (url.protocol !== 'https:') {
+    throw new Error('Download redirects must use HTTPS');
+  }
+  return url;
+}
+
 function buildDownloadAuthorizeBody(clipId) {
   return {
     item_id: clipId,
@@ -81,6 +89,7 @@ function createProxiedResponse(upstream) {
 
 module.exports = {
   SUPPORTED_DOWNLOAD_FORMATS,
+  assertSecureDownloadUrl,
   buildDownloadAuthorizeBody,
   createProxiedResponse,
   normalizeDownloadFormat

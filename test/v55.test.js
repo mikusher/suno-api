@@ -4,7 +4,8 @@ const assert = require('node:assert/strict');
 const {
   buildDownloadAuthorizeBody,
   createProxiedResponse,
-  normalizeDownloadFormat
+  normalizeDownloadFormat,
+  assertSecureDownloadUrl
 } = require('../src/lib/v55.js');
 
 test('normalizeDownloadFormat accepts the supported download formats', () => {
@@ -46,4 +47,18 @@ test('createProxiedResponse preserves binary payload and headers', async () => {
   );
   assert.equal(response.headers.get('transfer-encoding'), null);
   assert.deepEqual(new Uint8Array(await response.arrayBuffer()), new Uint8Array([1, 2, 3, 4]));
+});
+
+test('assertSecureDownloadUrl accepts HTTPS and resolves relative URLs', () => {
+  assert.equal(
+    assertSecureDownloadUrl('/api/download/clip/clip_123', 'https://studio-api-prod.suno.com').href,
+    'https://studio-api-prod.suno.com/api/download/clip/clip_123'
+  );
+});
+
+test('assertSecureDownloadUrl rejects non-HTTPS redirects', () => {
+  assert.throws(
+    () => assertSecureDownloadUrl('http://example.com/song.wav', 'https://studio-api-prod.suno.com'),
+    /HTTPS/
+  );
 });

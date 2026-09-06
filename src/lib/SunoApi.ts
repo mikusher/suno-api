@@ -11,7 +11,7 @@ import { BrowserContext, Page, Locator, chromium, firefox } from 'rebrowser-play
 import { createCursor, Cursor } from 'ghost-cursor-playwright';
 import { promises as fs } from 'fs';
 import path from 'node:path';
-import { buildDownloadAuthorizeBody } from './v55.js';
+import { assertSecureDownloadUrl, buildDownloadAuthorizeBody } from './v55.js';
 
 // sunoApi instance caching
 const globalForSunoApi = global as unknown as { sunoApiCache?: Map<string, SunoApi> };
@@ -70,6 +70,7 @@ interface PersonaResponse {
 
 class SunoApi {
   private static BASE_URL: string = 'https://studio-api.prod.suno.com';
+  private static DOWNLOAD_BASE_URL: string = 'https://studio-api-prod.suno.com';
   private static CLERK_BASE_URL: string = 'https://auth.suno.com';
   private static CLERK_VERSION = '5.117.0';
 
@@ -190,10 +191,10 @@ class SunoApi {
     this.currentToken = newToken;
   }
 
-  public async authorizeDownload(clipId: string): Promise<object> {
+  public async authorizeDownload(clipId: string): Promise<unknown> {
     await this.keepAlive(false);
     const response = await this.client.post(
-      `${SunoApi.BASE_URL}/api/download/authorize`,
+      `${SunoApi.DOWNLOAD_BASE_URL}/api/download/authorize`,
       buildDownloadAuthorizeBody(clipId)
     );
     return response.data;
@@ -203,22 +204,26 @@ class SunoApi {
     clipId: string,
     format: string
   ): Promise<{ status: number; headers: Record<string, string | string[] | undefined>; data: Buffer }> {
-    const authorization = await this.authorizeDownload(clipId) as {
+    const authorization = await this.authorizeDownload(clipId);
+    const authorizationData = authorization && typeof authorization === 'object'
+      ? authorization as {
       download_url?: string;
       downloadUrl?: string;
       url?: string;
       redirect_url?: string;
       redirectUrl?: string;
-    };
+      }
+      : {};
     const downloadUrl =
-      authorization.download_url ||
-      authorization.downloadUrl ||
-      authorization.redirect_url ||
-      authorization.redirectUrl ||
-      authorization.url ||
-      `${SunoApi.BASE_URL}/api/download/clip/${clipId}`;
-    const baseUrl = new URL(SunoApi.BASE_URL);
-    const downloadTargetUrl = new URL(downloadUrl, baseUrl);
+      (typeof authorization === 'string' && authorization) ||
+      authorizationData.download_url ||
+      authorizationData.downloadUrl ||
+      authorizationData.redirect_url ||
+      authorizationData.redirectUrl ||
+      authorizationData.url ||
+      `${SunoApi.DOWNLOAD_BASE_URL}/api/download/clip/${clipId}`;
+    const baseUrl = new URL(SunoApi.DOWNLOAD_BASE_URL);
+    const downloadTargetUrl = assertSecureDownloadUrl(downloadUrl, baseUrl);
     const requestClient = downloadTargetUrl.origin === baseUrl.origin ? this.client : axios;
     if (downloadTargetUrl.origin === baseUrl.origin) {
       downloadTargetUrl.searchParams.set('format', format);
@@ -236,7 +241,7 @@ class SunoApi {
         return response;
       }
 
-      const redirectTarget = new URL(location, downloadTargetUrl);
+      const redirectTarget = assertSecureDownloadUrl(location, downloadTargetUrl);
       const redirectClient = redirectTarget.origin === baseUrl.origin ? this.client : axios;
       return redirectClient.get(redirectTarget.toString(), {
         maxRedirects: 0,
@@ -245,10 +250,13 @@ class SunoApi {
       });
     };
 
-    const redirectedResponse =
-      response.status >= 300 && response.status < 400
-        ? await followRedirect(responseHeaders.location || responseHeaders.Location)
-        : response;
+    const location = responseHeaders.location || responseHeaders.Location;
+    if (response.status >= 300 && response.status < 400 && !location) {
+      throw new Error('Download redirect did not include a Location header');
+    }
+    const redirectedResponse = response.status >= 300 && response.status < 400
+      ? await followRedirect(location)
+      : response;
 
     return {
       status: redirectedResponse.status,
