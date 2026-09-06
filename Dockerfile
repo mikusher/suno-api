@@ -11,13 +11,9 @@ FROM node:lts-bookworm
 WORKDIR /app                                                                                                            
 COPY package*.json ./                                                                                                   
                                                                                                                     
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y libnss3 \                                       
-    libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \                       
-    libgbm1 libxkbcommon0 libasound2 libcups2 xvfb                                                                      
-                                                                                                                    
-ARG SUNO_COOKIE             
-RUN if [ -z "$SUNO_COOKIE" ]; then echo "Warning: SUNO_COOKIE is not set. You will have to set the cookies in the Cookie header of your requests."; fi                                           
-ENV SUNO_COOKIE=${SUNO_COOKIE}
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y libnss3 \
+    libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+    libgbm1 libxkbcommon0 libasound2 libcups2 xvfb
 # Disable GPU acceleration, as with it suno-api won't work in a Docker environment
 ENV BROWSER_DISABLE_GPU=true
 

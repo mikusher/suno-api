@@ -11,6 +11,7 @@ import { BrowserContext, Page, Locator, chromium, firefox } from 'rebrowser-play
 import { createCursor, Cursor } from 'ghost-cursor-playwright';
 import { promises as fs } from 'fs';
 import path from 'node:path';
+import { buildDownloadAuthorizeBody } from './v55.js';
 
 // sunoApi instance caching
 const globalForSunoApi = global as unknown as { sunoApiCache?: Map<string, SunoApi> };
@@ -18,7 +19,7 @@ const cache = globalForSunoApi.sunoApiCache || new Map<string, SunoApi>();
 globalForSunoApi.sunoApiCache = cache;
 
 const logger = pino();
-export const DEFAULT_MODEL = 'chirp-v3-5';
+export const DEFAULT_MODEL = 'chirp-fenix';
 
 export interface AudioInfo {
   id: string; // Unique identifier for the audio
@@ -187,6 +188,73 @@ class SunoApi {
     const newToken = renewResponse.data.jwt;
     // Update Authorization field in request header with the new JWT token
     this.currentToken = newToken;
+  }
+
+  public async authorizeDownload(clipId: string): Promise<object> {
+    await this.keepAlive(false);
+    const response = await this.client.post(
+      `${SunoApi.BASE_URL}/api/download/authorize`,
+      buildDownloadAuthorizeBody(clipId)
+    );
+    return response.data;
+  }
+
+  public async downloadClip(
+    clipId: string,
+    format: string
+  ): Promise<{ status: number; headers: Record<string, string | string[] | undefined>; data: Buffer }> {
+    const authorization = await this.authorizeDownload(clipId) as {
+      download_url?: string;
+      downloadUrl?: string;
+      url?: string;
+      redirect_url?: string;
+      redirectUrl?: string;
+    };
+    const downloadUrl =
+      authorization.download_url ||
+      authorization.downloadUrl ||
+      authorization.redirect_url ||
+      authorization.redirectUrl ||
+      authorization.url ||
+      `${SunoApi.BASE_URL}/api/download/clip/${clipId}`;
+    const baseUrl = new URL(SunoApi.BASE_URL);
+    const downloadTargetUrl = new URL(downloadUrl, baseUrl);
+    const requestClient = downloadTargetUrl.origin === baseUrl.origin ? this.client : axios;
+    if (downloadTargetUrl.origin === baseUrl.origin) {
+      downloadTargetUrl.searchParams.set('format', format);
+    }
+
+    const response = await requestClient.get(downloadTargetUrl.toString(), {
+      maxRedirects: 0,
+      responseType: 'arraybuffer',
+      validateStatus: (status) => status < 400
+    });
+    const responseHeaders = response.headers as Record<string, string>;
+
+    const followRedirect = async (location?: string) => {
+      if (!location) {
+        return response;
+      }
+
+      const redirectTarget = new URL(location, downloadTargetUrl);
+      const redirectClient = redirectTarget.origin === baseUrl.origin ? this.client : axios;
+      return redirectClient.get(redirectTarget.toString(), {
+        maxRedirects: 0,
+        responseType: 'arraybuffer',
+        validateStatus: (status) => status < 400
+      });
+    };
+
+    const redirectedResponse =
+      response.status >= 300 && response.status < 400
+        ? await followRedirect(responseHeaders.location || responseHeaders.Location)
+        : response;
+
+    return {
+      status: redirectedResponse.status,
+      headers: redirectedResponse.headers as Record<string, string | string[] | undefined>,
+      data: Buffer.from(redirectedResponse.data)
+    };
   }
 
   /**

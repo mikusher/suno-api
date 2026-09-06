@@ -1,0 +1,87 @@
+const SUPPORTED_DOWNLOAD_FORMATS = new Set(['wav', 'mp3', 'm4a', 'mp4']);
+
+function normalizeDownloadFormat(format) {
+  if (typeof format !== 'string') {
+    return null;
+  }
+
+  const normalized = format.trim().toLowerCase();
+  return SUPPORTED_DOWNLOAD_FORMATS.has(normalized) ? normalized : null;
+}
+
+function buildDownloadAuthorizeBody(clipId) {
+  return {
+    item_id: clipId,
+    item_type: 'clip'
+  };
+}
+
+function toBuffer(data) {
+  if (data == null) {
+    return Buffer.alloc(0);
+  }
+
+  if (Buffer.isBuffer(data)) {
+    return data;
+  }
+
+  if (data instanceof ArrayBuffer) {
+    return Buffer.from(data);
+  }
+
+  if (ArrayBuffer.isView(data)) {
+    return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  }
+
+  if (typeof data === 'string') {
+    return Buffer.from(data);
+  }
+
+  return Buffer.from(data);
+}
+
+function copyHeaders(sourceHeaders) {
+  const headers = new Headers();
+  if (!sourceHeaders) {
+    return headers;
+  }
+
+  const entries =
+    sourceHeaders instanceof Headers
+      ? sourceHeaders.entries()
+      : Object.entries(sourceHeaders);
+
+  for (const [key, value] of entries) {
+    if (value == null) {
+      continue;
+    }
+
+    const normalizedKey = key.toLowerCase();
+    if (normalizedKey === 'transfer-encoding' || normalizedKey === 'connection') {
+      continue;
+    }
+
+    if (Array.isArray(value)) {
+      headers.set(key, value.join(', '));
+      continue;
+    }
+
+    headers.set(key, String(value));
+  }
+
+  return headers;
+}
+
+function createProxiedResponse(upstream) {
+  return new Response(toBuffer(upstream.data), {
+    status: upstream.status || 200,
+    headers: copyHeaders(upstream.headers)
+  });
+}
+
+module.exports = {
+  SUPPORTED_DOWNLOAD_FORMATS,
+  buildDownloadAuthorizeBody,
+  createProxiedResponse,
+  normalizeDownloadFormat
+};
