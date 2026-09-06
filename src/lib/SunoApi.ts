@@ -11,7 +11,7 @@ import { BrowserContext, Page, Locator, chromium, firefox } from 'rebrowser-play
 import { createCursor, Cursor } from 'ghost-cursor-playwright';
 import { promises as fs } from 'fs';
 import path from 'node:path';
-import { assertSecureDownloadUrl, buildDownloadAuthorizeBody } from './v55.js';
+import { assertSecureDownloadUrl, buildDownloadAuthorizeBody, downloadClipFlow } from './v55.js';
 
 // sunoApi instance caching
 const globalForSunoApi = global as unknown as { sunoApiCache?: Map<string, SunoApi> };
@@ -204,65 +204,63 @@ class SunoApi {
     clipId: string,
     format: string
   ): Promise<{ status: number; headers: Record<string, string | string[] | undefined>; data: Buffer }> {
-    const authorization = await this.authorizeDownload(clipId);
-    const authorizationData = authorization && typeof authorization === 'object'
-      ? authorization as {
-      download_url?: string;
-      downloadUrl?: string;
-      url?: string;
-      redirect_url?: string;
-      redirectUrl?: string;
-      }
-      : {};
-    const downloadUrl =
-      (typeof authorization === 'string' && authorization) ||
-      authorizationData.download_url ||
-      authorizationData.downloadUrl ||
-      authorizationData.redirect_url ||
-      authorizationData.redirectUrl ||
-      authorizationData.url ||
-      `${SunoApi.DOWNLOAD_BASE_URL}/api/download/clip/${clipId}`;
     const baseUrl = new URL(SunoApi.DOWNLOAD_BASE_URL);
-    const downloadTargetUrl = assertSecureDownloadUrl(downloadUrl, baseUrl);
-    const requestClient = downloadTargetUrl.origin === baseUrl.origin ? this.client : axios;
-    if (downloadTargetUrl.origin === baseUrl.origin) {
-      downloadTargetUrl.searchParams.set('format', format);
-    }
+    return downloadClipFlow({
+      authorize: () => this.authorizeDownload(clipId),
+      getStatus: async () => {
+        const statusUrl = new URL(`${SunoApi.DOWNLOAD_BASE_URL}/api/download/clip/${clipId}`);
+        statusUrl.searchParams.set('format', format);
+        const response = await this.client.get(
+          statusUrl.toString(),
+          {
+            headers: { Accept: 'application/json' },
+            responseType: 'json',
+            timeout: 10000,
+            validateStatus: (status) => status < 400
+          }
+        );
+        return response.data;
+      },
+      fetchBinary: async (url: string) => {
+        const downloadTargetUrl = assertSecureDownloadUrl(url, baseUrl);
+        const response = await axios.get(downloadTargetUrl.toString(), {
+          headers: {},
+          maxRedirects: 0,
+          responseType: 'arraybuffer',
+          validateStatus: (status) => status < 400
+        });
+        const responseHeaders = response.headers as Record<string, string>;
+        const location = responseHeaders.location || responseHeaders.Location;
 
-    const response = await requestClient.get(downloadTargetUrl.toString(), {
-      maxRedirects: 0,
-      responseType: 'arraybuffer',
-      validateStatus: (status) => status < 400
+        if (response.status < 300 || response.status >= 400) {
+          return {
+            status: response.status,
+            headers: response.headers as Record<string, string | string[] | undefined>,
+            data: Buffer.from(response.data)
+          };
+        }
+
+        if (!location) {
+          throw new Error('Download redirect did not include a Location header');
+        }
+
+        const redirectTarget = assertSecureDownloadUrl(location, downloadTargetUrl);
+        const redirectedResponse = await axios.get(redirectTarget.toString(), {
+          headers: {},
+          maxRedirects: 0,
+          responseType: 'arraybuffer',
+          validateStatus: (status) => status < 400
+        });
+        return {
+          status: redirectedResponse.status,
+          headers: redirectedResponse.headers as Record<string, string | string[] | undefined>,
+          data: Buffer.from(redirectedResponse.data)
+        };
+      },
+      wait: () => sleep(1, 2),
+      maxAttempts: 30,
+      baseUrl: baseUrl.toString()
     });
-    const responseHeaders = response.headers as Record<string, string>;
-
-    const followRedirect = async (location?: string) => {
-      if (!location) {
-        return response;
-      }
-
-      const redirectTarget = assertSecureDownloadUrl(location, downloadTargetUrl);
-      const redirectClient = redirectTarget.origin === baseUrl.origin ? this.client : axios;
-      return redirectClient.get(redirectTarget.toString(), {
-        maxRedirects: 0,
-        responseType: 'arraybuffer',
-        validateStatus: (status) => status < 400
-      });
-    };
-
-    const location = responseHeaders.location || responseHeaders.Location;
-    if (response.status >= 300 && response.status < 400 && !location) {
-      throw new Error('Download redirect did not include a Location header');
-    }
-    const redirectedResponse = response.status >= 300 && response.status < 400
-      ? await followRedirect(location)
-      : response;
-
-    return {
-      status: redirectedResponse.status,
-      headers: redirectedResponse.headers as Record<string, string | string[] | undefined>,
-      data: Buffer.from(redirectedResponse.data)
-    };
   }
 
   /**

@@ -17,6 +17,64 @@ function assertSecureDownloadUrl(value, baseUrl) {
   return url;
 }
 
+function getDownloadUrl(data) {
+  if (typeof data === 'string') {
+    return data;
+  }
+
+  if (!data || typeof data !== 'object') {
+    return null;
+  }
+
+  return data.download_url || data.downloadUrl || data.redirect_url || data.redirectUrl || data.url || null;
+}
+
+async function downloadClipFlow({
+  authorize,
+  getStatus,
+  fetchBinary,
+  wait = async () => {},
+  maxAttempts = 30,
+  baseUrl = 'https://studio-api-prod.suno.com'
+}) {
+  const authorization = await authorize();
+  let downloadUrl = getDownloadUrl(authorization);
+
+  for (let attempt = 0; !downloadUrl && attempt < maxAttempts; attempt += 1) {
+    const statusData = await getStatus();
+    const status = statusData?.status;
+    downloadUrl = getDownloadUrl(statusData);
+
+    if (downloadUrl) {
+      break;
+    }
+
+    if (status === 'ready') {
+      throw new Error('Suno download was ready without a download URL');
+    }
+
+    if (status === 'error' || status === 'failed') {
+      throw new Error(`Suno download failed: ${status}`);
+    }
+
+    if (status !== 'processing' && status !== 'pending' && status !== 'queued') {
+      throw new Error(`Suno download failed: ${status || 'unknown status'}`);
+    }
+
+    if (attempt + 1 === maxAttempts) {
+      throw new Error('Suno download timed out while waiting for readiness');
+    }
+
+    await wait();
+  }
+
+  if (!downloadUrl) {
+    throw new Error('Suno download timed out while waiting for readiness');
+  }
+
+  return fetchBinary(assertSecureDownloadUrl(downloadUrl, baseUrl).toString());
+}
+
 function buildDownloadAuthorizeBody(clipId) {
   return {
     item_id: clipId,
@@ -92,5 +150,6 @@ module.exports = {
   assertSecureDownloadUrl,
   buildDownloadAuthorizeBody,
   createProxiedResponse,
+  downloadClipFlow,
   normalizeDownloadFormat
 };
